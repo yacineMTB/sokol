@@ -19452,3 +19452,87 @@ SOKOL_API_IMPL sg_gl_attachments_info sg_gl_query_attachments_info(sg_attachment
 #endif
 
 #endif // SOKOL_GFX_IMPL
+
+
+/*
+sokol_gfx_ext.h - extensions for sokol_gfx
+https://github.com/edubart/sokol_gp
+*/
+
+
+/* begin yacine ext */
+#if defined(SOKOL_IMPL) && !defined(SOKOL_GFX_EXT_IMPL)
+#define SOKOL_GFX_EXT_IMPL
+#endif
+
+#ifndef SOKOL_GFX_EXT_INCLUDED
+#define SOKOL_GFX_EXT_INCLUDED
+
+#ifndef SOKOL_GFX_INCLUDED
+#error "Please include sokol_gfx.h before sokol_gfx_ext.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+SOKOL_GFX_API_DECL void sg_query_image_pixels(sg_image img_id, void* pixels, int size);
+SOKOL_GFX_API_DECL void sg_query_pixels(int x, int y, int w, int h, bool origin_top_left, void *pixels, int size);
+SOKOL_GFX_API_DECL void sg_update_texture_filter(sg_image img_id, sg_filter min_filter, sg_filter mag_filter);
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
+
+#endif // SOKOL_GFX_EXT_INCLUDED
+
+#ifdef SOKOL_GFX_EXT_IMPL
+#ifndef SOKOL_GFX_EXT_IMPL_INCLUDED
+#define SOKOL_GFX_EXT_IMPL_INCLUDED
+
+#ifndef SOKOL_GFX_IMPL_INCLUDED
+#error "Please include sokol_gfx.h implementation before sokol_gp.h implementation"
+#endif
+
+#if defined(_SOKOL_ANY_GL)
+
+static void _sg_gl_query_image_pixels(_sg_image_t* img, void* pixels) {
+    SOKOL_ASSERT(img->gl.target == GL_TEXTURE_2D);
+    SOKOL_ASSERT(0 != img->gl.tex[img->cmn.active_slot]);
+    static GLuint newFbo = 0;
+    GLuint oldFbo = 0;
+    if(newFbo == 0) {
+        glGenFramebuffers(1, &newFbo);
+    }
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, (GLint*)&oldFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, newFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, img->gl.tex[img->cmn.active_slot], 0);
+    glReadPixels(0, 0, img->cmn.width, img->cmn.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glBindFramebuffer(GL_FRAMEBUFFER, oldFbo);
+    //glDeleteFramebuffers(1, &newFbo);
+    _SG_GL_CHECK_ERROR();
+#endif
+}
+
+void sg_query_image_pixels(sg_image img_id, void* pixels, int size) {
+    SOKOL_ASSERT(pixels);
+    SOKOL_ASSERT(img_id.id != SG_INVALID_ID);
+    _sg_image_t* img = _sg_lookup_image(&_sg.pools, img_id.id);
+    SOKOL_ASSERT(img);
+    SOKOL_ASSERT(size >= (img->cmn.width * img->cmn.height * 4));
+    _SOKOL_UNUSED(size);
+#if defined(_SOKOL_ANY_GL)
+    _sg_gl_query_image_pixels(img, pixels);
+#elif defined(SOKOL_D3D11)
+// todo
+#elif defined(SOKOL_METAL)
+// todo
+#endif
+}
+
+#endif // SOKOL_GFX_EXT_IMPL_INCLUDED
+#endif // SOKOL_GFX_EXT_IMPL
+/* begin yacine ext */

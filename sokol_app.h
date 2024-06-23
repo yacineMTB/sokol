@@ -1376,6 +1376,7 @@ typedef enum sapp_keycode {
     SAPP_KEYCODE_RIGHT_ALT        = 346,
     SAPP_KEYCODE_RIGHT_SUPER      = 347,
     SAPP_KEYCODE_MENU             = 348,
+    _SAPP_KEYCODE_NUM             = 349,
 } sapp_keycode;
 
 /*
@@ -1838,6 +1839,8 @@ SOKOL_APP_API_DECL void sapp_set_clipboard_string(const char* str);
 SOKOL_APP_API_DECL const char* sapp_get_clipboard_string(void);
 /* set the window title (only on desktop platforms) */
 SOKOL_APP_API_DECL void sapp_set_window_title(const char* str);
+/* set the clipboard image. Only wasm ipmlemented*/
+SOKOL_APP_API_DECL void sapp_set_clipboard_image(int w, int h, const uint8_t* pixels);
 /* set the window icon (only on Windows and Linux) */
 SOKOL_APP_API_DECL void sapp_set_icon(const sapp_icon_desc* icon_desc);
 /* gets the total number of dropped files (after an SAPP_EVENTTYPE_FILES_DROPPED event) */
@@ -4882,13 +4885,30 @@ EM_JS(void, sapp_js_remove_beforeunload_listener, (void), {
     window.removeEventListener('beforeunload', Module.sokol_beforeunload);
 });
 
+// yacine diff 1: handling images from paste, short circuiting into filedrop
 EM_JS(void, sapp_js_add_clipboard_listener, (void), {
     Module.sokol_paste = (event) => {
-        const pasted_str = event.clipboardData.getData('text');
-        withStackSave(() => {
-            const cstr = stringToUTF8OnStack(pasted_str);
-            __sapp_emsc_onpaste(cstr);
-        });
+        const clipboardData = event.clipboardData;
+
+        const pastedText = clipboardData.getData('text');
+        if (pastedText) {
+            withStackSave(() => {
+                const cstr = stringToUTF8OnStack(pastedText);
+                __sapp_emsc_onpaste(cstr);
+            });
+        }
+
+        const files = Array.from(event.clipboardData.items).filter(item => item.kind === 'file').map(item => item.getAsFile());
+        Module.sokol_dropped_files = files;
+        __sapp_emsc_begin_drop(files.length);
+        for (let i = 0; i < files.length; i++) {
+            withStackSave(() => {
+                const cstr = stringToUTF8OnStack(files[i].name);
+                __sapp_emsc_drop(i, cstr);
+            });
+        }
+        __sapp_emsc_end_drop(0, 0, 0);
+
     };
     window.addEventListener('paste', Module.sokol_paste);
 });
@@ -4898,22 +4918,43 @@ EM_JS(void, sapp_js_remove_clipboard_listener, (void), {
 });
 
 EM_JS(void, sapp_js_write_clipboard, (const char* c_str), {
-    const str = UTF8ToString(c_str);
-    const ta = document.createElement('textarea');
-    ta.setAttribute('autocomplete', 'off');
-    ta.setAttribute('autocorrect', 'off');
-    ta.setAttribute('autocapitalize', 'off');
-    ta.setAttribute('spellcheck', 'false');
-    ta.style.left = -100 + 'px';
-    ta.style.top = -100 + 'px';
-    ta.style.height = 1;
-    ta.style.width = 1;
-    ta.value = str;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
+    const dataurl = UTF8ToString(c_str);
+    fetch(dataurl).then((res) => {
+        return res.blob();
+    }).then((blob) => {
+        if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        const clipboardItem = new ClipboardItem({ [blob.type]: blob });
+        return navigator.clipboard.write([clipboardItem]);
+        }
+    });
+
 });
+
+EM_JS(void, sapp_js_write_clipboard_image, (int w, int h, const uint8_t* pixels), {
+    // Create a new canvas element
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+
+    // Get the canvas drawing context
+    const ctx = canvas.getContext('2d');
+
+    // Create ImageData from raw pixels
+    const imageData = new ImageData(new Uint8ClampedArray(HEAPU8.subarray(pixels, pixels + w * h * 4)), w, h);
+
+    // Put the image data onto the canvas
+    ctx.putImageData(imageData, 0, 0);
+
+    // Convert canvas content to a Blob
+    canvas.toBlob(function(blob) {
+        const clipboardItem = new ClipboardItem({'image/png': blob});
+        navigator.clipboard.write([clipboardItem]);
+    }, 'image/png');
+});
+
+_SOKOL_PRIVATE void _sapp_emsc_write_clipboard_image(int w, int h, const uint8_t* pixels) {
+    sapp_js_write_clipboard_image(w, h, pixels);
+}
 
 _SOKOL_PRIVATE void _sapp_emsc_set_clipboard_string(const char* str) {
     sapp_js_write_clipboard(str);
@@ -11476,6 +11517,20 @@ SOKOL_API_IMPL void sapp_set_window_title(const char* title) {
         _sapp_win32_update_window_title();
     #elif defined(_SAPP_LINUX)
         _sapp_x11_update_window_title();
+    #endif
+}
+
+// yacine impl 2
+SOKOL_API_IMPL void sapp_set_clipboard_image(int w, int h, const uint8_t* pixels) {
+    #if defined(_SAPP_MACOS)
+        return;
+    #elif defined(_SAPP_WIN32)
+        return;
+    #elif defined(_SAPP_LINUX)
+        return;
+    #elif defined(_SAPP_EMSCRIPTEN)
+        _sapp_emsc_write_clipboard_image(w, h, pixels);
+        return;
     #endif
 }
 
